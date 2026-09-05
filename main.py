@@ -1,5 +1,10 @@
 import argparse
 import os
+import json
+
+from prompts import system_prompt
+
+from call_function import available_functions
 
 from dotenv import load_dotenv
 from openai import OpenAI
@@ -28,6 +33,7 @@ def main() -> None:
 
     # messages to be passed into the LLM
     messages = [
+        {"role": "system", "content": system_prompt},
         {"role": "user", "content": args.user_prompt},
     ]
 
@@ -45,6 +51,9 @@ def generate_content(client: OpenAI, messages: list, verbose: bool) -> None:
     response = client.chat.completions.create(
         model="openrouter/free",
         messages=messages,
+        tools=available_functions,
+        #turn temp=0 on when you want the model to behave more consistent, but it comsumes more tokens
+        #temperature=0,
     )
 
     #error if response usage is not there
@@ -56,9 +65,15 @@ def generate_content(client: OpenAI, messages: list, verbose: bool) -> None:
         print("Prompt tokens:", response.usage.prompt_tokens)
         print("Response tokens:", response.usage.completion_tokens)
 
-    #always print the response
-    print("Response:")
-    print(response.choices[0].message.content)
+    message = response.choices[0].message
+
+    if message.tool_calls:
+        for tool_call in message.tool_calls:
+            function_args = json.loads(tool_call.function.arguments or "{}")
+            print(f"Calling function: {tool_call.function.name}({function_args})")
+    else:
+        print("Response:")
+        print(response.choices[0].message.content)
 
 if __name__ == "__main__":
     main()
