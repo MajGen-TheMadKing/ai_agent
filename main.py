@@ -1,10 +1,11 @@
 import argparse
 import os
 import json
+import sys
 
 from prompts import system_prompt
 
-from call_function import available_functions
+from call_function import available_functions, call_function
 
 from dotenv import load_dotenv
 from openai import OpenAI
@@ -31,7 +32,8 @@ def main() -> None:
         api_key=api_key,
     )
 
-    # messages to be passed into the LLM
+
+    # messages to be passed into the LLM, list of dicts, conversation history
     messages = [
         {"role": "system", "content": system_prompt},
         {"role": "user", "content": args.user_prompt},
@@ -41,11 +43,19 @@ def main() -> None:
     if args.verbose:
         print(f"User prompt: {args.user_prompt}\n")
 
-    # function call to generate an answer from the LLM and print it to the console
-    generate_content(client, messages, args.verbose)
+    # loop 20 times to let the LLM iterate on its own responses
+    for _ in range(20):
+        # function call to generate an answer from the LLM and print it to the console
+        result = generate_content(client, messages, args.verbose)
+        if result:
+            print("Final Response:")
+            print(result)
+            return
+    print("Could not finish the task after 20 iterations")
+    sys.exit(1)
 
  # function to generate an answer from the LLM and print it to the console.
-def generate_content(client: OpenAI, messages: list, verbose: bool) -> None:
+def generate_content(client: OpenAI, messages: list, verbose: bool) -> str |None:
 
     # generate a response object by passing in the model to use and the message
     response = client.chat.completions.create(
@@ -65,15 +75,32 @@ def generate_content(client: OpenAI, messages: list, verbose: bool) -> None:
         print("Prompt tokens:", response.usage.prompt_tokens)
         print("Response tokens:", response.usage.completion_tokens)
 
+    #get the response the LLM gave
     message = response.choices[0].message
+    messages.append(message)
 
+    #if the response is a tool call, do it. Otherwise just print the text response
     if message.tool_calls:
+        #go through all the tool calls
         for tool_call in message.tool_calls:
-            function_args = json.loads(tool_call.function.arguments or "{}")
-            print(f"Calling function: {tool_call.function.name}({function_args})")
+
+            #call the function that the LLM wants to use
+            result_of_tool_call = call_function(tool_call, verbose)
+
+            #raise an exception if the result of the tool call has no content
+            if not result_of_tool_call["content"]:
+                raise Exception("result_of_tool_call is empty")
+
+            messages.append(result_of_tool_call)
+
+            # verbose prints the result of the tool call
+            if verbose:
+                print(f"-> {result_of_tool_call['content']}")
+
     else:
-        print("Response:")
-        print(response.choices[0].message.content)
+        # append and return the text response
+        return message.content
+
 
 if __name__ == "__main__":
     main()
